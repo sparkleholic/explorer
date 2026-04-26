@@ -5,6 +5,21 @@ const database = require("./utils/Database");
 const sshManager = require("./utils/SSHManager");
 const logger = require("./utils/Logger");
 
+function friendlyQueryError(msg) {
+  const m = msg && msg.match(/Database file version: (\d+), Current build storage version: (\d+)/);
+  if (m) {
+    const [, fileVer, buildVer] = m;
+    const direction = Number(fileVer) > Number(buildVer) ? "newer" : "older";
+    return (
+      `Storage version mismatch: the database was created with Ladybug storage v${fileVer}, ` +
+      `but this build uses v${buildVer}. ` +
+      `The database is ${direction} than this version of Ladybug Explorer and cannot be opened. ` +
+      `Use a matching version of Ladybug Explorer to access this database.`
+    );
+  }
+  return `Database opened but is not queryable: ${msg}`;
+}
+
 function buildResponse() {
   const dbConfig = database.getCurrentConfig();
   const sshConfig = sshManager.getConfig();
@@ -71,12 +86,9 @@ router.post("/", async (req, res) => {
     if (mode === "ssh") sshManager.unmountAll();
     await rollback(prevConfig);
     if (prevSSHActive) {
-      // Can't restore the previous SSH mount automatically; inform the user.
       logger.warn("Previous SSH mount could not be restored after failed DB switch.");
     }
-    return res.status(400).send({
-      error: `Database opened but is not queryable: ${err.message}`,
-    });
+    return res.status(400).send({ error: friendlyQueryError(err.message) });
   }
 
   res.send(buildResponse());
