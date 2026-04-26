@@ -5,8 +5,10 @@ const database = require("./utils/Database");
 const sshManager = require("./utils/SSHManager");
 const logger = require("./utils/Logger");
 
-function friendlyQueryError(msg) {
-  const m = msg && msg.match(/Database file version: (\d+), Current build storage version: (\d+)/);
+function friendlyError(msg) {
+  // Native addon wraps messages as "[Error: ...]" — strip the wrapper.
+  const clean = (msg || "").replace(/^\[Error:\s*/, "").replace(/\]$/, "").trim();
+  const m = clean.match(/Database file version: (\d+), Current build storage version: (\d+)/);
   if (m) {
     const [, fileVer, buildVer] = m;
     const direction = Number(fileVer) > Number(buildVer) ? "newer" : "older";
@@ -17,7 +19,7 @@ function friendlyQueryError(msg) {
       `Use a matching version of Ladybug Explorer to access this database.`
     );
   }
-  return `Database opened but is not queryable: ${msg}`;
+  return clean || msg;
 }
 
 function buildResponse() {
@@ -75,7 +77,7 @@ router.post("/", async (req, res) => {
   } catch (err) {
     // reconfigure itself failed — SSH mount or DB open error.
     if (mode === "ssh" && sshManager.isActive()) sshManager.unmountAll();
-    return res.status(400).send({ error: err.message });
+    return res.status(400).send({ error: friendlyError(err.message) });
   }
 
   // Probe the new DB with a schema query to catch silent open failures
@@ -88,7 +90,7 @@ router.post("/", async (req, res) => {
     if (prevSSHActive) {
       logger.warn("Previous SSH mount could not be restored after failed DB switch.");
     }
-    return res.status(400).send({ error: friendlyQueryError(err.message) });
+    return res.status(400).send({ error: friendlyError(err.message) });
   }
 
   res.send(buildResponse());
