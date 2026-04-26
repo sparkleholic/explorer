@@ -21,6 +21,12 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
+// Fallback: prevent native-addon async rejections from crashing the process
+// if they somehow escape the per-reconfigure interception in Database.js.
+process.on("unhandledRejection", (reason) => {
+  logger.error("Unhandled promise rejection (native addon):", reason?.message || reason);
+});
+
 const app = express();
 if (CROSS_ORIGIN) {
   app.use(cors());

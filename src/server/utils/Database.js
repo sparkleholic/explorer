@@ -224,15 +224,36 @@ class Database {
     oldDb.close();
 
     this.dbPath = newDbPath;
+
+    // The native DB addon may reject a Promise asynchronously for errors like
+    // storage version mismatches rather than throwing synchronously, so a plain
+    // try/catch around init() cannot catch them. Intercept those rejections
+    // here so they don't escape as unhandled and crash the process.
+    let nativeError = null;
+    const onUnhandledRejection = (reason) => { nativeError = reason; };
+    process.on("unhandledRejection", onUnhandledRejection);
+
     try {
       this.init();
+      // Yield two event-loop turns so the addon can post any pending callbacks.
+      await new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
     } catch (err) {
-      // Restore the previous database so the singleton stays usable.
+      process.removeListener("unhandledRejection", onUnhandledRejection);
       this.dbPath = prevDbPath;
       try { this.init(); } catch (restoreErr) {
         logger.error(`Failed to restore previous database: ${restoreErr.message}`);
       }
       throw err;
+    }
+
+    process.removeListener("unhandledRejection", onUnhandledRejection);
+
+    if (nativeError) {
+      this.dbPath = prevDbPath;
+      try { this.init(); } catch (restoreErr) {
+        logger.error(`Failed to restore previous database: ${restoreErr.message}`);
+      }
+      throw nativeError instanceof Error ? nativeError : new Error(String(nativeError));
     }
   }
 
