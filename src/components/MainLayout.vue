@@ -429,7 +429,13 @@ export default {
       return (await Axios.get("/api/session/settings")).data;
     },
     async reloadSchema() {
-      await this.getSchema();
+      try {
+        await this.getSchema();
+      } catch (err) {
+        const msg = err.response?.data?.error || err.message || "Failed to load schema.";
+        alert(`Schema reload failed: ${msg}`);
+        return;
+      }
       this.handleSchemaReload(this.schema);
       this.$refs.schemaView.redrawGraph(true);
     },

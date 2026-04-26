@@ -196,28 +196,44 @@ class Database {
   }
 
   async reconfigure({ dbDir, dbFile, inMemory }) {
+    // Validate inputs BEFORE touching the current DB so a bad request never
+    // leaves the singleton in a broken state.
+    let newDbPath;
+    if (inMemory) {
+      newDbPath = ":memory:";
+    } else {
+      if (!dbDir) {
+        throw new Error("dbDir is required for file-based mode.");
+      }
+      newDbPath = path.resolve(path.join(dbDir, dbFile || "database.kz"));
+    }
+
     const isAllConnectionsReleased = this.connectionPool.every(
       (conn) => conn.useCount === 0
     );
     if (!isAllConnectionsReleased) {
       throw new Error("Please make sure no queries are running before reconfiguring.");
     }
+
+    const prevDbPath = this.dbPath;
     const oldConnectionPool = this.connectionPool;
     const oldDb = this.db;
     this.connectionPool = [];
     this.db = null;
     await Promise.all(oldConnectionPool.map((conn) => conn.connection.close()));
     oldDb.close();
-    if (inMemory) {
-      this.dbPath = ":memory:";
-    } else {
-      if (!dbDir) {
-        throw new Error("dbDir is required for file-based mode.");
+
+    this.dbPath = newDbPath;
+    try {
+      this.init();
+    } catch (err) {
+      // Restore the previous database so the singleton stays usable.
+      this.dbPath = prevDbPath;
+      try { this.init(); } catch (restoreErr) {
+        logger.error(`Failed to restore previous database: ${restoreErr.message}`);
       }
-      const fileName = dbFile || "database.kz";
-      this.dbPath = path.resolve(path.join(dbDir, fileName));
+      throw err;
     }
-    this.init();
   }
 
   async getSchema() {
