@@ -29,7 +29,7 @@ if (process.env.NODE_ENV !== "production") {
 }
 const os = require("os");
 
-class Database {
+class EmbeddedDatabase {
   constructor() {
     const isWasmMode = process.env.LBUG_WASM &&
       process.env.LBUG_WASM.toLowerCase() === "true";
@@ -311,4 +311,29 @@ class Database {
   }
 }
 
-module.exports = new Database();
+// Façade: routes keep calling these methods; the active backend is the embedded
+// DB by default and can be swapped to a proxy backend at runtime (DB menu).
+class DatabaseFacade {
+  constructor() {
+    this._embedded = new EmbeddedDatabase();
+    this._active = this._embedded;
+  }
+  // Backend management (used by DBConfig).
+  get embedded() { return this._embedded; }
+  get isProxy() { return this._active !== this._embedded; }
+  useEmbedded() { this._active = this._embedded; }
+  useProxy(backend) { this._active = backend; }
+
+  // Delegated surface (everything the routes call).
+  get lbug() { return this._embedded.lbug; }   // STORAGE_VERSION source for embedded paths
+  getAccessModeString() { return this._active.getAccessModeString(); }
+  getConnection() { return this._active.getConnection(); }
+  releaseConnection(c) { return this._active.releaseConnection(c); }
+  getSchema() { return this._active.getSchema(); }
+  getDbVersion() { return this._active.getDbVersion(); }
+  getCurrentConfig() { return this._active.getCurrentConfig(); }
+  reconfigure(opts) { return this._active.reconfigure(opts); }
+  reset() { return this._active.reset(); }
+}
+
+module.exports = new DatabaseFacade();
