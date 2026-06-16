@@ -1,139 +1,108 @@
-const { spawn, execSync } = require("child_process");
 const fs = require("fs");
-const os = require("os");
-const path = require("path");
 const net = require("net");
+const { Client } = require("ssh2");
 const logger = require("./Logger");
 
-// Manages a single `ssh -N -L <localPort>:127.0.0.1:<remotePort>` forward to the
-// host running the Explorer bridge. Keeps the bridge port unexposed off-host:
-// the backend talks HTTP to 127.0.0.1:<localPort> and ssh forwards it to the
-// remote loopback bridge port.
+// Opens an in-process SSH local port-forward to the host running the Explorer
+// bridge, using the pure-Node `ssh2` library (no system ssh/sshpass). The backend
+// then speaks HTTP to 127.0.0.1:<localPort>, and ssh2 forwards each connection to
+// the remote loopback bridge port — keeping the bridge port unexposed off-host.
+//
+// The ssh2 Client constructor is injectable (`opts.Client`) so the behaviour can
+// be unit-tested without a real SSH server.
 class SSHTunnel {
-  constructor() {
-    this._proc = null;
+  constructor(opts = {}) {
+    this._ClientCtor = opts.Client || Client;
+    this._client = null;
+    this._server = null;
     this._localPort = null;
-    this._passFile = null;
-
-    const cleanup = () => { this.close(); };
-    process.on("exit", () => this.close());
-    process.on("SIGINT", () => { cleanup(); process.exit(); });
-    process.on("SIGTERM", () => { cleanup(); process.exit(); });
   }
 
-  isActive() { return this._proc !== null; }
+  isActive() { return this._client !== null; }
   get localPort() { return this._localPort; }
 
-  _hasCmd(cmd) {
-    try { execSync(`which ${cmd}`, { stdio: "pipe" }); return true; }
-    catch { return false; }
-  }
-
-  _findFreePort() {
-    return new Promise((resolve, reject) => {
-      const srv = net.createServer();
-      srv.unref();
-      srv.on("error", reject);
-      srv.listen(0, "127.0.0.1", () => {
-        const port = srv.address().port;
-        srv.close(() => resolve(port));
-      });
-    });
-  }
-
-  _waitForPort(port, timeoutMs) {
-    const deadline = Date.now() + timeoutMs;
-    return new Promise((resolve, reject) => {
-      const tryConnect = () => {
-        const sock = net.connect(port, "127.0.0.1");
-        sock.on("connect", () => { sock.destroy(); resolve(); });
-        sock.on("error", () => {
-          sock.destroy();
-          if (Date.now() > deadline) reject(new Error("SSH tunnel did not become ready in time"));
-          else setTimeout(tryConnect, 150);
-        });
-      };
-      tryConnect();
-    });
-  }
-
   // opts: { host, port=22, user, password?, privateKeyPath?, remotePort }
-  async open(opts) {
-    const { host, port = 22, user, password, privateKeyPath, remotePort } = opts;
+  open(opts) {
+    const { host, port = 22, user, password, privateKeyPath, remotePort } = opts || {};
     if (!host || !user || !remotePort) {
-      throw new Error("host, user and remotePort are required to open an SSH tunnel.");
+      return Promise.reject(new Error("host, user and remotePort are required to open an SSH tunnel."));
     }
-    if (!this._hasCmd("ssh")) {
-      throw new Error("ssh is not installed. Please install OpenSSH client to use proxy mode.");
-    }
-    if (this._proc) this.close();
 
-    const localPort = await this._findFreePort();
-
-    const sshArgs = [
-      "-N",
-      "-o", "ExitOnForwardFailure=yes",
-      "-o", "StrictHostKeyChecking=no",
-      "-o", "UserKnownHostsFile=/dev/null",
-      "-o", "ServerAliveInterval=15",
-      "-p", String(port),
-      "-L", `${localPort}:127.0.0.1:${remotePort}`,
-    ];
-    if (privateKeyPath) sshArgs.push("-i", privateKeyPath);
-    sshArgs.push(`${user}@${host}`);
-
-    let cmd = "ssh";
-    let args = sshArgs;
-    if (password) {
-      if (!this._hasCmd("sshpass")) {
-        throw new Error("sshpass is not installed. Install sshpass for password auth, or use a private key file.");
+    const connectCfg = { host, port: Number(port) || 22, username: user, readyTimeout: 15000 };
+    if (privateKeyPath) {
+      try {
+        connectCfg.privateKey = fs.readFileSync(privateKeyPath);
+      } catch (err) {
+        return Promise.reject(new Error(`Cannot read private key file '${privateKeyPath}': ${err.message}`));
       }
-      this._passFile = path.join(os.tmpdir(), `lbug-tunnel-pass-${Date.now()}`);
-      fs.writeFileSync(this._passFile, password, { mode: 0o600 });
-      cmd = "sshpass";
-      args = ["-f", this._passFile, "ssh", ...sshArgs];
+    } else if (password) {
+      connectCfg.password = password;
+    } else {
+      return Promise.reject(new Error("Either a password or a private key file is required for SSH."));
     }
 
-    const proc = spawn(cmd, args, { stdio: ["ignore", "ignore", "pipe"] });
-    proc.stderr.on("data", (d) => logger.warn(`ssh tunnel: ${d.toString().trim()}`));
-    proc.on("exit", (code) => {
-      if (this._proc === proc) {
-        this._proc = null;
-        this._localPort = null;
-        logger.warn(`ssh tunnel exited (code ${code})`);
+    if (this._client) this.close();
+
+    return new Promise((resolve, reject) => {
+      const client = new this._ClientCtor();
+      let settled = false;
+
+      const fail = (err) => {
+        if (settled) return;
+        settled = true;
+        this.close();
+        try { client.end(); } catch { /* ignore */ }
+        reject(err instanceof Error ? err : new Error(String(err)));
+      };
+
+      client.on("error", (err) => {
+        fail(new Error(`SSH connection failed: ${err.message}`));
+      });
+
+      client.on("ready", () => {
+        const server = net.createServer((socket) => {
+          client.forwardOut("127.0.0.1", socket.remotePort || 0, "127.0.0.1", remotePort, (err, stream) => {
+            if (err) {
+              logger.warn(`SSH forward failed: ${err.message}`);
+              socket.destroy();
+              return;
+            }
+            socket.pipe(stream).pipe(socket);
+            socket.on("error", () => stream.destroy());
+            stream.on("error", () => socket.destroy());
+          });
+        });
+        server.on("error", (err) => fail(new Error(`Local forward listener failed: ${err.message}`)));
+        server.listen(0, "127.0.0.1", () => {
+          if (settled) { server.close(); return; }
+          settled = true;
+          this._client = client;
+          this._server = server;
+          this._localPort = server.address().port;
+          logger.info(`SSH tunnel up: 127.0.0.1:${this._localPort} -> ${user}@${host}:[127.0.0.1:${remotePort}]`);
+          resolve(this._localPort);
+        });
+      });
+
+      try {
+        client.connect(connectCfg);
+      } catch (err) {
+        fail(new Error(`SSH connection failed: ${err.message}`));
       }
     });
-    this._proc = proc;
-    this._localPort = localPort;
-
-    try {
-      await this._waitForPort(localPort, 8000);
-    } catch (err) {
-      this.close();
-      throw err;
-    }
-
-    // The password file is no longer needed once ssh has authenticated/forwarded.
-    if (this._passFile) {
-      try { fs.unlinkSync(this._passFile); } catch { /* ignore */ }
-      this._passFile = null;
-    }
-
-    logger.info(`SSH tunnel up: 127.0.0.1:${localPort} -> ${user}@${host}:[127.0.0.1:${remotePort}]`);
-    return localPort;
   }
 
   close() {
-    if (this._proc) {
-      try { this._proc.kill("SIGTERM"); } catch { /* ignore */ }
-      this._proc = null;
-    }
+    if (this._server) { try { this._server.close(); } catch { /* ignore */ } this._server = null; }
+    if (this._client) { try { this._client.end(); } catch { /* ignore */ } this._client = null; }
     this._localPort = null;
-    if (this._passFile) {
-      try { fs.unlinkSync(this._passFile); } catch { /* ignore */ }
-      this._passFile = null;
-    }
   }
 }
 
-module.exports = new SSHTunnel();
+const singleton = new SSHTunnel();
+singleton.SSHTunnel = SSHTunnel;
+process.on("exit", () => singleton.close());
+process.on("SIGINT", () => { singleton.close(); process.exit(); });
+process.on("SIGTERM", () => { singleton.close(); process.exit(); });
+
+module.exports = singleton;
