@@ -408,6 +408,7 @@ export default {
       const response = await Axios.get("/api/mode");
       const mode = response.data.mode;
       this.modeStore.setMode(mode);
+      this.modeStore.setBackend(response.data.backend || "embedded");
       this.$nextTick(() => {
         // Check if WASM modal has been seen. If in demo mode and not seen,
         // show the modal and set the cookie.

@@ -19,6 +19,7 @@ router.get("/", async (_, res) => {
     res.send({
       mode,
       isProduction,
+      backend: database.isProxy ? "proxy" : "embedded",
     });
   } catch (err) {
     return res.status(400).send({ error: err.message });

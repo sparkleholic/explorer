@@ -5,6 +5,7 @@ export const useModeStore = defineStore("mode", {
   state: () => ({
     currentMode: "READ_WRITE",
     theme: "vs-dark",
+    backend: "embedded",
   }),
 
   getters: {
@@ -26,12 +27,19 @@ export const useModeStore = defineStore("mode", {
 
     isWasm(state) {
       return state.currentMode === MODES.WASM || state.currentMode === MODES.DEMO;
-    }
+    },
+
+    isProxy(state) {
+      return state.backend === "proxy";
+    },
   },
 
   actions: {
     setMode(mode) {
       this.currentMode = mode;
+    },
+    setBackend(backend) {
+      this.backend = backend;
     },
     toggleTheme() {
       this.theme = this.theme === 'vs-dark' ? 'vs-light' : 'vs-dark';
