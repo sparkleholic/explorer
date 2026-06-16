@@ -104,7 +104,7 @@
             </a>
           </li>
           <li
-            v-if="!modeStore.isReadOnly"
+            v-if="!modeStore.isReadOnly && !modeStore.isProxy"
             :class="['nav-item', { active: showImporter || showLoader }]"
           >
             <a

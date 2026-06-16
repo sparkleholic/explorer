@@ -45,6 +45,14 @@
               >
               <span><i class="fa-solid fa-server" />&nbsp; Remote (SSH)</span>
             </label>
+            <label class="db-option-card">
+              <input
+                v-model="mode"
+                type="radio"
+                value="proxy"
+              >
+              <span><i class="fa-solid fa-network-wired" />&nbsp; Proxy (remote ladybug process)</span>
+            </label>
           </div>
 
           <!-- File-based fields -->
@@ -197,6 +205,114 @@
             </div>
           </div>
 
+          <!-- Proxy fields -->
+          <div
+            v-else-if="mode === 'proxy'"
+            class="db-fields"
+          >
+            <div class="db-ssh-section-label">
+              Connection (SSH tunnel)
+            </div>
+            <div class="db-field-row">
+              <label>Host</label>
+              <input
+                v-model="proxy.host"
+                type="text"
+                class="form-control db-input"
+                placeholder="192.168.1.100 or hostname"
+              >
+            </div>
+            <div class="db-field-row">
+              <label>SSH Port</label>
+              <input
+                v-model.number="proxy.port"
+                type="number"
+                class="form-control db-input db-input--short"
+                placeholder="22"
+                min="1"
+                max="65535"
+              >
+            </div>
+            <div class="db-field-row">
+              <label>User</label>
+              <input
+                v-model="proxy.user"
+                type="text"
+                class="form-control db-input"
+                placeholder="username"
+              >
+            </div>
+
+            <div class="db-ssh-section-label db-ssh-section-label--mt">
+              Authentication
+            </div>
+            <div class="db-field-row">
+              <label>Auth type</label>
+              <div class="db-auth-options">
+                <label class="db-auth-option">
+                  <input
+                    v-model="proxy.authType"
+                    type="radio"
+                    value="password"
+                  >
+                  Password
+                </label>
+                <label class="db-auth-option">
+                  <input
+                    v-model="proxy.authType"
+                    type="radio"
+                    value="key"
+                  >
+                  Private key file
+                </label>
+              </div>
+            </div>
+            <div
+              v-if="proxy.authType === 'password'"
+              class="db-field-row"
+            >
+              <label>Password</label>
+              <input
+                v-model="proxy.password"
+                type="password"
+                class="form-control db-input"
+                placeholder="SSH password"
+                autocomplete="current-password"
+              >
+            </div>
+            <div
+              v-else
+              class="db-field-row"
+            >
+              <label>Key file</label>
+              <input
+                v-model="proxy.privateKeyPath"
+                type="text"
+                class="form-control db-input"
+                placeholder="/home/user/.ssh/id_rsa"
+              >
+            </div>
+
+            <div class="db-ssh-section-label db-ssh-section-label--mt">
+              Bridge
+            </div>
+            <div class="db-field-row">
+              <label>Bridge port</label>
+              <input
+                v-model.number="proxy.bridgePort"
+                type="number"
+                class="form-control db-input db-input--short"
+                placeholder="7999"
+                min="1"
+                max="65535"
+              >
+            </div>
+            <div class="db-info-text db-info-text--mt">
+              <i class="fa-solid fa-circle-info" />&nbsp;
+              Connects to a process that owns the database read-write and runs the Explorer bridge. Import and Reset are unavailable in this mode.
+            </div>
+          </div>
+
           <div
             v-if="errorMessage"
             class="db-error"
@@ -247,6 +363,16 @@ const defaultSSH = () => ({
   remoteFile: "",
 });
 
+const defaultProxy = () => ({
+  host: "",
+  port: 22,
+  user: "",
+  authType: "password",
+  password: "",
+  privateKeyPath: "",
+  bridgePort: 7999,
+});
+
 export default {
   name: "DBConfigModal",
   emits: ["reload-schema"],
@@ -257,6 +383,7 @@ export default {
     dbDir: "",
     dbFile: "",
     ssh: defaultSSH(),
+    proxy: defaultProxy(),
     isApplying: false,
     errorMessage: "",
   }),
@@ -266,6 +393,9 @@ export default {
       const { mode, ssh, isInMemory, dbPath } = this.currentConfig;
       if (mode === "ssh" && ssh) {
         return `${ssh.user}@${ssh.host}:${ssh.remoteDir}`;
+      }
+      if (mode === "proxy") {
+        return `proxy ${this.currentConfig.user}@${this.currentConfig.host} (bridge :${this.currentConfig.bridgePort})`;
       }
       if (isInMemory) return "In-memory";
       return dbPath;
@@ -293,6 +423,14 @@ export default {
         this.ssh = s
           ? { ...defaultSSH(), host: s.host, port: s.port, user: s.user, authType: s.authType, remoteDir: s.remoteDir, privateKeyPath: s.privateKeyPath || "" }
           : defaultSSH();
+        if (res.data.mode === "proxy") {
+          this.proxy = {
+            ...defaultProxy(),
+            host: res.data.host || "",
+            user: res.data.user || "",
+            bridgePort: res.data.bridgePort || 7999,
+          };
+        }
       } catch {
         this.currentConfig = null;
       }
@@ -306,6 +444,18 @@ export default {
       this.isApplying = false;
     },
     buildPayload() {
+      if (this.mode === "proxy") {
+        const p = this.proxy;
+        const proxyPayload = {
+          host: p.host,
+          port: p.port || 22,
+          user: p.user,
+          bridgePort: p.bridgePort || 7999,
+        };
+        if (p.authType === "password") proxyPayload.password = p.password;
+        else proxyPayload.privateKeyPath = p.privateKeyPath;
+        return { mode: "proxy", proxy: proxyPayload };
+      }
       if (this.mode === "memory") {
         return { mode: "memory" };
       }
