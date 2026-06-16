@@ -83,21 +83,18 @@ else()
 endif()
 ```
 
-- [ ] **Step 2: Add the new bridge sources and link httplib to the main target**
-
-In the main executable's source list (the block starting near
-`src/graphdb/LadybugGraphStore.cpp`, around line 175) add:
-
-```cmake
-    src/bridge/ResultJson.cpp
-    src/bridge/ExplorerBridge.cpp
-```
+- [ ] **Step 2: Link httplib to the main target**
 
 In the main target's `target_link_libraries(...)` (around line 227) add:
 
 ```cmake
         httplib::httplib
 ```
+
+**Do NOT add the `src/bridge/*.cpp` source lines here.** CMake validates that
+listed source files exist at *configure* time, so each bridge source line is
+added by the task that creates the file (A2 adds `ResultJson.cpp`, A6 adds
+`ExplorerBridge.cpp`). This keeps every task's configure/build self-consistent.
 
 - [ ] **Step 3: Link httplib into the test target**
 
@@ -129,10 +126,23 @@ git commit -m "build: add cpp-httplib (find_package, FetchContent fallback) for 
 **Files:**
 - Create: `include/bridge/ResultJson.h`
 - Create: `src/bridge/ResultJson.cpp`
+- Modify: `CMakeLists.txt` (register the new source)
 - Test: `tests/bridge/ResultJsonTest.cpp`
 
 The serializer mirrors `ladybug/tools/nodejs_api/src_cpp/node_util.cpp`. This task
 covers primitives; Tasks A3–A4 add nested/graph types and the QueryResult wrapper.
+
+- [ ] **Step 0: Register the source file in CMake**
+
+In the main executable's source list (block starting near
+`src/graphdb/LadybugGraphStore.cpp`, ~line 175) add:
+
+```cmake
+    src/bridge/ResultJson.cpp
+```
+
+(A1 already added the `httplib::httplib` link and dependency; this is the first
+bridge source to exist, so configure will now succeed.)
 
 - [ ] **Step 1: Write the header**
 
@@ -638,7 +648,17 @@ git commit -m "feat(graphdb): LadybugGraphStore.createConnection for bridge use"
 **Files:**
 - Create: `include/bridge/ExplorerBridge.h`
 - Create: `src/bridge/ExplorerBridge.cpp`
+- Modify: `CMakeLists.txt` (register the new source)
 - Modify: `tests/bridge/ExplorerBridgeTest.cpp`
+
+- [ ] **Step 0: Register the source file in CMake**
+
+In the main executable's source list (block starting near
+`src/graphdb/LadybugGraphStore.cpp`, ~line 175) add:
+
+```cmake
+    src/bridge/ExplorerBridge.cpp
+```
 
 - [ ] **Step 1: Write the header**
 
