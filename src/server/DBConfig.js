@@ -4,6 +4,9 @@ const router = express.Router();
 const database = require("./utils/Database");
 const sshManager = require("./utils/SSHManager");
 const logger = require("./utils/Logger");
+const axios = require("axios");
+const sshTunnel = require("./utils/SSHTunnel");
+const { ProxyBackend } = require("./utils/ProxyBackend");
 
 function friendlyError(msg) {
   // Native addon wraps messages as "[Error: ...]" — strip the wrapper.
@@ -23,10 +26,14 @@ function friendlyError(msg) {
 }
 
 function buildResponse() {
+  if (database.isProxy) {
+    const cfg = database.getCurrentConfig();   // { mode:'proxy', host, bridgePort, user, ... }
+    return { ...cfg, backend: "proxy" };
+  }
   const dbConfig = database.getCurrentConfig();
   const sshConfig = sshManager.getConfig();
   const mode = sshConfig ? "ssh" : (dbConfig.isInMemory ? "memory" : "file");
-  return { ...dbConfig, mode, ssh: sshConfig };
+  return { ...dbConfig, mode, ssh: sshConfig, backend: "embedded" };
 }
 
 async function rollback(prevConfig) {
@@ -50,7 +57,7 @@ router.get("/", (_, res) => {
 });
 
 router.post("/", async (req, res) => {
-  const { mode, dbDir, dbFile, ssh } = req.body;
+  const { mode, dbDir, dbFile, ssh, proxy } = req.body;
 
   // Validate directory existence before touching the current DB.
   if (mode === "file") {
@@ -62,10 +69,40 @@ router.post("/", async (req, res) => {
     }
   }
 
+  // Proxy mode: connect to a remote process that owns the DB read-write and runs
+  // the Explorer bridge, reached through an SSH local port-forward. Mutually
+  // exclusive with the local file/memory/ssh options.
+  if (mode === "proxy") {
+    const { host, port = 22, user, password, privateKeyPath, bridgePort } = proxy || {};
+    if (!host || !user || !bridgePort) {
+      return res.status(400).send({ error: "host, user and bridgePort are required for proxy mode." });
+    }
+    try {
+      const localPort = await sshTunnel.open({ host, port, user, password, privateKeyPath, remotePort: bridgePort });
+      const baseURL = `http://127.0.0.1:${localPort}`;
+      const http = {
+        post: (p, body) => axios.post(`${baseURL}${p}`, body, { timeout: 30000 }),
+        get: (p) => axios.get(`${baseURL}${p}`, { timeout: 30000 }),
+      };
+      // Probe liveness before committing the switch.
+      await http.get("/ping");
+      const backend = new ProxyBackend({ host, bridgePort, localPort, user }, http);
+      await backend.getSchema();   // surfaces an unreachable/incompatible bridge
+      // Leaving the local SSH mount (if any) and activate the proxy backend.
+      sshManager.unmountAll();
+      database.useProxy(backend);
+      return res.send(buildResponse());
+    } catch (err) {
+      sshTunnel.close();
+      return res.status(400).send({ error: friendlyError((err && err.message) || String(err)) });
+    }
+  }
+
   const prevConfig = database.getCurrentConfig();
   const prevSSHActive = sshManager.isActive();
 
   try {
+    if (database.isProxy) { sshTunnel.close(); database.useEmbedded(); }
     if (mode === "ssh") {
       const { host, port = 22, user, password, privateKeyPath, remoteDir, remoteFile } = ssh;
       const mountPoint = sshManager.mount({ host, port, user, password, privateKeyPath, remoteDir });
