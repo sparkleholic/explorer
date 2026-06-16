@@ -165,10 +165,12 @@ Liveness check used by the client right after the tunnel is up.
   - `explorer_bridge_port` (int, e.g. 7999)
   - `explorer_bridge_bind` (string, default `127.0.0.1`)
   - When disabled, no thread is started and behaviour is byte-for-byte today's.
-- `CMakeLists.txt`: vendor `cpp-httplib` (single header via `FetchContent` or a
-  committed header under `third_party/`); add the two new `src/bridge/*.cpp`
-  files to the target. No new linked system libraries (httplib is header-only;
-  it needs `-lpthread`, already pulled in).
+- `CMakeLists.txt`: vendor `cpp-httplib` via **`FetchContent`** (pinned to a
+  release tag, e.g. `v0.18.x`), exposing the `httplib::httplib` interface target;
+  add the two new `src/bridge/*.cpp` files to the target. No new linked system
+  libraries (httplib is header-only; it needs `-lpthread`, already pulled in).
+  The bridge uses HTTP only (no TLS), so `OpenSSL` is **not** required —
+  `CPPHTTPLIB_OPENSSL_SUPPORT` stays off.
 
 ### Concurrency notes
 - The bridge uses a separate `Connection` from the domain's connection. Reads
