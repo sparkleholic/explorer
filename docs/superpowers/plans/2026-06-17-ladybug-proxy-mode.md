@@ -1838,25 +1838,13 @@ In `src/components/MainLayout.vue`, change the Import nav `v-if` (line ~107) fro
             v-if="!modeStore.isReadOnly && !modeStore.isProxy"
 ```
 
-- [ ] **Step 3: Disable the Reset action in proxy mode**
+- [ ] **Step 3: (Reset gating) — N/A, verified during implementation**
 
-In `src/components/SettingsView/SettingsMainView.vue`, find the database-reset
-control (around the `databaseResetState*` data, line ~441) and the button/handler
-that POSTs `/api/reset`. Guard the handler and disable the button:
-
-- In the reset method, add a guard at the top:
-
-```js
-      if (this.modeStore.isProxy) {
-        this.databaseResetStateText = "Reset is unavailable in proxy mode.";
-        this.databaseResetStateClass = "danger";
-        return;
-      }
-```
-
-- Add `:disabled="modeStore.isProxy"` to the reset button element, and ensure the
-  component imports/uses the mode store (it already reads other stores; if not,
-  add `import { useModeStore } from "@/store/ModeStore";` and `modeStore: useModeStore()` in `setup`/`data` following the file's existing store pattern).
+The current frontend does **not** invoke `/api/reset` anywhere (the
+`databaseResetState*` data props in `SettingsMainView.vue` are vestigial; there is
+no reset-database button). So there is no frontend control to gate. Reset is
+already protected server-side: `ProxyBackend.reset()` rejects with "Reset is not
+supported in proxy mode." No frontend change is needed for Reset.
 
 - [ ] **Step 4: Lint the frontend changes**
 
