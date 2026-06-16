@@ -69,24 +69,42 @@ router.post("/", async (req, res) => {
     }
   }
 
-  // Proxy mode: connect to a remote process that owns the DB read-write and runs
-  // the Explorer bridge, reached through an SSH local port-forward. Mutually
-  // exclusive with the local file/memory/ssh options.
+  // Proxy mode: connect to a process that owns the DB read-write and runs the
+  // Explorer bridge. Two connection types (mutually exclusive with file/memory/ssh):
+  //   - "direct": connect straight to host:bridgePort (same PC / trusted network;
+  //     the bridge binds to loopback, so this needs no SSH).
+  //   - "ssh": open an in-process SSH local port-forward and connect via it.
   if (mode === "proxy") {
-    const { host, port = 22, user, password, privateKeyPath, bridgePort } = proxy || {};
-    if (!host || !user || !bridgePort) {
-      return res.status(400).send({ error: "host, user and bridgePort are required for proxy mode." });
+    const p = proxy || {};
+    const connection = p.connection || "ssh";
+    const bridgePort = p.bridgePort;
+    if (!p.host || !bridgePort) {
+      return res.status(400).send({ error: "host and bridgePort are required for proxy mode." });
     }
     try {
-      const localPort = await sshTunnel.open({ host, port, user, password, privateKeyPath, remotePort: bridgePort });
-      const baseURL = `http://127.0.0.1:${localPort}`;
+      let baseURL;
+      let meta;
+      if (connection === "direct") {
+        baseURL = `http://${p.host}:${bridgePort}`;
+        meta = { connection: "direct", host: p.host, bridgePort };
+      } else {
+        if (!p.user) {
+          return res.status(400).send({ error: "user is required for SSH tunnel proxy mode." });
+        }
+        const localPort = await sshTunnel.open({
+          host: p.host, port: p.port || 22, user: p.user,
+          password: p.password, privateKeyPath: p.privateKeyPath, remotePort: bridgePort,
+        });
+        baseURL = `http://127.0.0.1:${localPort}`;
+        meta = { connection: "ssh", host: p.host, bridgePort, localPort, user: p.user };
+      }
       const http = {
-        post: (p, body) => axios.post(`${baseURL}${p}`, body, { timeout: 30000 }),
-        get: (p) => axios.get(`${baseURL}${p}`, { timeout: 30000 }),
+        post: (path, body) => axios.post(`${baseURL}${path}`, body, { timeout: 30000 }),
+        get: (path) => axios.get(`${baseURL}${path}`, { timeout: 30000 }),
       };
       // Probe liveness before committing the switch.
       await http.get("/ping");
-      const backend = new ProxyBackend({ host, bridgePort, localPort, user }, http);
+      const backend = new ProxyBackend(meta, http);
       await backend.getSchema();   // surfaces an unreachable/incompatible bridge
       // Leaving the local SSH mount (if any) and activate the proxy backend.
       sshManager.unmountAll();

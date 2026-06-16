@@ -211,7 +211,28 @@
             class="db-fields"
           >
             <div class="db-ssh-section-label">
-              Connection (SSH tunnel)
+              Connection
+            </div>
+            <div class="db-field-row">
+              <label>Type</label>
+              <div class="db-auth-options">
+                <label class="db-auth-option">
+                  <input
+                    v-model="proxy.connection"
+                    type="radio"
+                    value="direct"
+                  >
+                  Direct (no SSH)
+                </label>
+                <label class="db-auth-option">
+                  <input
+                    v-model="proxy.connection"
+                    type="radio"
+                    value="ssh"
+                  >
+                  SSH tunnel
+                </label>
+              </div>
             </div>
             <div class="db-field-row">
               <label>Host</label>
@@ -219,79 +240,82 @@
                 v-model="proxy.host"
                 type="text"
                 class="form-control db-input"
-                placeholder="192.168.1.100 or hostname"
-              >
-            </div>
-            <div class="db-field-row">
-              <label>SSH Port</label>
-              <input
-                v-model.number="proxy.port"
-                type="number"
-                class="form-control db-input db-input--short"
-                placeholder="22"
-                min="1"
-                max="65535"
-              >
-            </div>
-            <div class="db-field-row">
-              <label>User</label>
-              <input
-                v-model="proxy.user"
-                type="text"
-                class="form-control db-input"
-                placeholder="username"
+                placeholder="127.0.0.1 or hostname"
               >
             </div>
 
-            <div class="db-ssh-section-label db-ssh-section-label--mt">
-              Authentication
-            </div>
-            <div class="db-field-row">
-              <label>Auth type</label>
-              <div class="db-auth-options">
-                <label class="db-auth-option">
-                  <input
-                    v-model="proxy.authType"
-                    type="radio"
-                    value="password"
-                  >
-                  Password
-                </label>
-                <label class="db-auth-option">
-                  <input
-                    v-model="proxy.authType"
-                    type="radio"
-                    value="key"
-                  >
-                  Private key file
-                </label>
+            <template v-if="proxy.connection === 'ssh'">
+              <div class="db-field-row">
+                <label>SSH Port</label>
+                <input
+                  v-model.number="proxy.port"
+                  type="number"
+                  class="form-control db-input db-input--short"
+                  placeholder="22"
+                  min="1"
+                  max="65535"
+                >
               </div>
-            </div>
-            <div
-              v-if="proxy.authType === 'password'"
-              class="db-field-row"
-            >
-              <label>Password</label>
-              <input
-                v-model="proxy.password"
-                type="password"
-                class="form-control db-input"
-                placeholder="SSH password"
-                autocomplete="current-password"
+              <div class="db-field-row">
+                <label>User</label>
+                <input
+                  v-model="proxy.user"
+                  type="text"
+                  class="form-control db-input"
+                  placeholder="username"
+                >
+              </div>
+
+              <div class="db-ssh-section-label db-ssh-section-label--mt">
+                Authentication
+              </div>
+              <div class="db-field-row">
+                <label>Auth type</label>
+                <div class="db-auth-options">
+                  <label class="db-auth-option">
+                    <input
+                      v-model="proxy.authType"
+                      type="radio"
+                      value="password"
+                    >
+                    Password
+                  </label>
+                  <label class="db-auth-option">
+                    <input
+                      v-model="proxy.authType"
+                      type="radio"
+                      value="key"
+                    >
+                    Private key file
+                  </label>
+                </div>
+              </div>
+              <div
+                v-if="proxy.authType === 'password'"
+                class="db-field-row"
               >
-            </div>
-            <div
-              v-else
-              class="db-field-row"
-            >
-              <label>Key file</label>
-              <input
-                v-model="proxy.privateKeyPath"
-                type="text"
-                class="form-control db-input"
-                placeholder="/home/user/.ssh/id_rsa"
+                <label>Password</label>
+                <input
+                  v-model="proxy.password"
+                  type="password"
+                  class="form-control db-input"
+                  placeholder="SSH password"
+                  autocomplete="current-password"
+                >
+              </div>
+              <div
+                v-else
+                class="db-field-row"
               >
-            </div>
+                <label>Key file</label>
+                <input
+                  v-model="proxy.privateKeyPath"
+                  type="text"
+                  class="form-control db-input"
+                  placeholder="/home/user/.ssh/id_rsa"
+                >
+              </div>
+            </template>
 
             <div class="db-ssh-section-label db-ssh-section-label--mt">
               Bridge
@@ -309,7 +333,13 @@
             </div>
             <div class="db-info-text db-info-text--mt">
               <i class="fa-solid fa-circle-info" />&nbsp;
-              Connects to a process that owns the database read-write and runs the Explorer bridge. Import and Reset are unavailable in this mode.
+              <template v-if="proxy.connection === 'direct'">
+                Direct: connects straight to the bridge at host:port. Use for the same PC or a trusted network (the bridge must be reachable at that address).
+              </template>
+              <template v-else>
+                SSH tunnel: forwards to the bridge over SSH; use for remote hosts where the bridge is bound to loopback.
+              </template>
+              Import and Reset are unavailable in this mode.
             </div>
           </div>
 
@@ -364,6 +394,7 @@ const defaultSSH = () => ({
 });
 
 const defaultProxy = () => ({
+  connection: "ssh",
   host: "",
   port: 22,
   user: "",
@@ -395,7 +426,11 @@ export default {
         return `${ssh.user}@${ssh.host}:${ssh.remoteDir}`;
       }
       if (mode === "proxy") {
-        return `proxy ${this.currentConfig.user}@${this.currentConfig.host} (bridge :${this.currentConfig.bridgePort})`;
+        const c = this.currentConfig;
+        if (c.connection === "direct") {
+          return `direct ${c.host}:${c.bridgePort}`;
+        }
+        return `proxy ${c.user}@${c.host} (bridge :${c.bridgePort})`;
       }
       if (isInMemory) return "In-memory";
       return dbPath;
@@ -426,6 +461,7 @@ export default {
         if (res.data.mode === "proxy") {
           this.proxy = {
             ...defaultProxy(),
+            connection: res.data.connection || "ssh",
             host: res.data.host || "",
             user: res.data.user || "",
             bridgePort: res.data.bridgePort || 7999,
@@ -446,7 +482,14 @@ export default {
     buildPayload() {
       if (this.mode === "proxy") {
         const p = this.proxy;
+        if (p.connection === "direct") {
+          return {
+            mode: "proxy",
+            proxy: { connection: "direct", host: p.host, bridgePort: p.bridgePort || 7999 },
+          };
+        }
         const proxyPayload = {
+          connection: "ssh",
           host: p.host,
           port: p.port || 22,
           user: p.user,

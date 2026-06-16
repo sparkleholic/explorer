@@ -26,6 +26,7 @@ class ProxyBackend {
     return {
       mode: "proxy",
       isInMemory: false,
+      connection: this._meta.connection || "ssh",
       host: this._meta.host,
       bridgePort: this._meta.bridgePort,
       user: this._meta.user,
