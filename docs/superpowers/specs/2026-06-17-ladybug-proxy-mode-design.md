@@ -165,12 +165,23 @@ Liveness check used by the client right after the tunnel is up.
   - `explorer_bridge_port` (int, e.g. 7999)
   - `explorer_bridge_bind` (string, default `127.0.0.1`)
   - When disabled, no thread is started and behaviour is byte-for-byte today's.
-- `CMakeLists.txt`: vendor `cpp-httplib` via **`FetchContent`** (pinned to a
-  release tag, e.g. `v0.18.x`), exposing the `httplib::httplib` interface target;
-  add the two new `src/bridge/*.cpp` files to the target. No new linked system
-  libraries (httplib is header-only; it needs `-lpthread`, already pulled in).
-  The bridge uses HTTP only (no TLS), so `OpenSSL` is **not** required —
-  `CPPHTTPLIB_OPENSSL_SUPPORT` stays off.
+- `CMakeLists.txt`: provide `cpp-httplib` with a **`find_package` first,
+  `FetchContent` fallback** pattern — prefer a system/sysroot-installed package,
+  and only download when it is absent:
+  ```cmake
+  find_package(httplib QUIET)
+  if(NOT httplib_FOUND)
+      FetchContent_Declare(httplib
+          GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+          GIT_TAG        v0.18.7)   # pinned
+      FetchContent_MakeAvailable(httplib)
+  endif()
+  ```
+  Either path exposes the `httplib::httplib` interface target. Add the two new
+  `src/bridge/*.cpp` files to the target and link `httplib::httplib`. No new
+  linked system libraries (httplib is header-only; it needs `-lpthread`, already
+  pulled in). The bridge uses HTTP only (no TLS), so `OpenSSL` is **not**
+  required — `CPPHTTPLIB_OPENSSL_SUPPORT` stays off.
 
 ### Concurrency notes
 - The bridge uses a separate `Connection` from the domain's connection. Reads
